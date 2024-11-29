@@ -1,0 +1,1714 @@
+i) Write a program to create two processes. First process takes a string and passes it to second process through a pipe. The second process concatenates the received string with another string without using string function and sends it back to the first process for printing.
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <string.h>
+#include <sys/wait.h>
+
+#define MAX_LEN 256
+#define ADDITIONAL_STRING " - Modified by child"
+
+void concatenate_without_strcat(char *dest, const char *src) {
+    while (*dest != '\0') {
+        dest++;
+    }
+    while (*src != '\0') {
+        *dest++ = *src++;
+    }
+    *dest = '\0';
+}
+
+int main() {
+    int pipe1[2], pipe2[2];
+    pid_t pid;
+    char input_string[MAX_LEN];
+    char buffer[MAX_LEN * 2];
+   
+    if (pipe(pipe1) == -1 || pipe(pipe2) == -1) {
+        perror("pipe");
+        exit(EXIT_FAILURE);
+    }
+
+    if ((pid = fork()) == -1) {
+        perror("fork");
+        exit(EXIT_FAILURE);
+    }
+   
+    if (pid == 0) {
+        close(pipe1[1]);
+        close(pipe2[0]);
+       
+        read(pipe1[0], buffer, MAX_LEN);
+        close(pipe1[0]);
+
+        concatenate_without_strcat(buffer, ADDITIONAL_STRING);
+       
+        write(pipe2[1], buffer, strlen(buffer) + 1);
+        close(pipe2[1]);  
+       
+        exit(EXIT_SUCCESS);
+    }
+    else {
+        close(pipe1[0]);
+        close(pipe2[1]);
+       
+        printf("Enter a string: ");
+        fgets(input_string, MAX_LEN, stdin);
+        input_string[strcspn(input_string, "\n")] = '\0';
+       
+        write(pipe1[1], input_string, strlen(input_string) + 1);
+        close(pipe1[1]);
+       
+        wait(NULL);
+       
+        read(pipe2[0], buffer, MAX_LEN * 2);
+        close(pipe2[0]);  
+       
+        printf("Modified string from child: %s\n", buffer);
+    }
+    return 0;
+}
+
+ii) Write a program in which the parent process sends two matrices to its child process through a pipe and the child process returns the sum of the matrices to the parent through a pipe. The parent should print the result.
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <sys/wait.h>
+
+#define SIZE 3
+
+void read_matrix(int matrix[SIZE][SIZE]) {
+    printf("Enter matrix (%d x %d):\n", SIZE, SIZE);
+    for (int i = 0; i < SIZE; i++) {
+        for (int j = 0; j < SIZE; j++) {
+            scanf("%d", &matrix[i][j]);
+        }
+    }
+}
+
+void print_matrix(int matrix[SIZE][SIZE]) {
+    printf("Matrix (%d x %d):\n", SIZE, SIZE);
+    for (int i = 0; i < SIZE; i++) {
+        for (int j = 0; j < SIZE; j++) {
+            printf("%d ", matrix[i][j]);
+        }
+        printf("\n");
+    }
+}
+
+void add_matrices(int a[SIZE][SIZE], int b[SIZE][SIZE], int result[SIZE][SIZE]) {
+    for (int i = 0; i < SIZE; i++) {
+        for (int j = 0; j < SIZE; j++) {
+            result[i][j] = a[i][j] + b[i][j];
+        }
+    }
+}
+
+int main() {
+    int pipe1[2], pipe2[2];
+    pid_t pid;
+
+    if (pipe(pipe1) == -1 || pipe(pipe2) == -1) {
+        perror("pipe");
+        exit(EXIT_FAILURE);
+    }
+
+    if ((pid = fork()) == -1) {
+        perror("fork");
+        exit(EXIT_FAILURE);
+    }
+
+    if (pid == 0) {
+        close(pipe1[1]);
+        close(pipe2[0]);
+
+        int matrix1[SIZE][SIZE], matrix2[SIZE][SIZE], result[SIZE][SIZE];
+       
+        read(pipe1[0], matrix1, sizeof(matrix1));
+        read(pipe1[0], matrix2, sizeof(matrix2));
+        close(pipe1[0]);
+
+        add_matrices(matrix1, matrix2, result);
+
+        write(pipe2[1], result, sizeof(result));
+        close(pipe2[1]);
+
+        exit(EXIT_SUCCESS);
+    } else {
+        close(pipe1[0]);
+        close(pipe2[1]);
+
+        int matrix1[SIZE][SIZE], matrix2[SIZE][SIZE], result[SIZE][SIZE];
+
+        printf("Enter the first matrix:\n");
+        read_matrix(matrix1);
+
+        printf("Enter the second matrix:\n");
+        read_matrix(matrix2);
+
+        write(pipe1[1], matrix1, sizeof(matrix1));
+        write(pipe1[1], matrix2, sizeof(matrix2));
+        close(pipe1[1]);
+
+        wait(NULL);
+
+        read(pipe2[0], result, sizeof(result));
+        close(pipe2[0]);
+
+        printf("Sum of the matrices:\n");
+        print_matrix(result);
+    }
+    return 0;
+}
+
+3. There are two nodes A and B. Write a program to determine CPU load of node B from node A.
+
+Node B
+#include <stdlib.h>
+#include <unistd.h>
+#include <string.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+
+#define PORT 8080
+#define BUFFER_SIZE 256
+
+void get_cpu_load(char *buffer, size_t size) {
+    FILE *fp = popen("top -bn1 | grep 'Cpu(s)' | sed 's/.*, *\\([0-9.]*\\)%* id.*/\\1/' | awk '{print 100 - $1}'", "r");
+    if (fp == NULL) {
+        snprintf(buffer, size, "Error retrieving CPU load");
+        return;
+    }
+    if (fgets(buffer, size, fp) == NULL) {
+        snprintf(buffer, size, "Error reading CPU load");
+    }
+    pclose(fp);
+}
+
+int main() {
+    int server_fd, new_socket;
+    struct sockaddr_in address;
+    int addrlen = sizeof(address);
+    char buffer[BUFFER_SIZE] = {0};
+
+    if ((server_fd = socket(AF_INET, SOCK_STREAM, 0)) == 0) {
+        perror("socket failed");
+        exit(EXIT_FAILURE);
+    }
+
+    address.sin_family = AF_INET;
+    address.sin_addr.s_addr = INADDR_ANY;
+    address.sin_port = htons(PORT);
+
+    // Binding the socket to the port
+    if (bind(server_fd, (struct sockaddr *)&address, sizeof(address)) < 0) {
+        perror("bind failed");
+        close(server_fd);
+        exit(EXIT_FAILURE);
+    }
+
+    if (listen(server_fd, 3) < 0) {
+        perror("listen");
+        close(server_fd);
+        exit(EXIT_FAILURE);
+    }
+
+    // Accepting incoming connection
+    if ((new_socket = accept(server_fd, (struct sockaddr *)&address, (socklen_t*)&addrlen)) < 0) {
+        perror("accept");
+        close(server_fd);
+        exit(EXIT_FAILURE);
+    }
+
+    get_cpu_load(buffer, sizeof(buffer));
+
+    send(new_socket, buffer, strlen(buffer), 0);
+   
+    close(new_socket);
+    close(server_fd);
+
+    return 0;
+}
+
+Node A
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+
+#define PORT 8080
+#define BUFFER_SIZE 256
+
+int main() {
+    int sock = 0;
+    struct sockaddr_in serv_addr;
+    char buffer[BUFFER_SIZE] = {0};
+
+    if ((sock = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
+        perror("Socket creation error");
+        exit(EXIT_FAILURE);
+    }
+
+    serv_addr.sin_family = AF_INET;
+    serv_addr.sin_port = htons(PORT);
+
+    // Convert IPv4 and IPv6 addresses from text to binary
+    if (inet_pton(AF_INET, "127.0.0.1", &serv_addr.sin_addr) <= 0) {
+        perror("Invalid address/ Address not supported");
+        exit(EXIT_FAILURE);
+    }
+
+    if (connect(sock, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0) {
+        perror("Connection failed");
+        exit(EXIT_FAILURE);
+    }
+
+    read(sock, buffer, sizeof(buffer));
+    printf("CPU Load of Node B: %s%%\n", buffer);
+
+    close(sock);
+
+    return 0;
+}
+ 
+
+4. Write a server C program using shared memory and semaphore (server increments counter between sem_wait() and sem_post()). Create shared memory using mmap.
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <sys/mman.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <semaphore.h>
+#include <string.h>
+
+#define SHARED_MEM_NAME "/shared_mem"
+#define SEMAPHORE_NAME "/sem_example"
+#define SHARED_MEM_SIZE sizeof(int)
+
+int main() {
+    int fd;
+    int *shared_counter;
+    sem_t *sem;
+
+    fd = shm_open(SHARED_MEM_NAME, O_CREAT | O_RDWR, 0666);
+    if (fd == -1) {
+        perror("shm_open");
+        exit(EXIT_FAILURE);
+    }
+
+    if (ftruncate(fd, SHARED_MEM_SIZE) == -1) {
+        perror("ftruncate");
+        exit(EXIT_FAILURE);
+    }
+
+    shared_counter = mmap(NULL, SHARED_MEM_SIZE, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+    if (shared_counter == MAP_FAILED) {
+        perror("mmap");
+        exit(EXIT_FAILURE);
+    }
+
+    *shared_counter = 0;
+
+    sem = sem_open(SEMAPHORE_NAME, O_CREAT, 0666, 1);
+    if (sem == SEM_FAILED) {
+        perror("sem_open");
+        exit(EXIT_FAILURE);
+    }
+
+    // Incrementing the counter in a loop
+    while (1) {
+        sem_wait(sem);
+
+        (*shared_counter)++;
+
+        printf("Counter value: %d\n", *shared_counter);
+
+        sem_post(sem);
+
+        sleep(1);
+    }
+
+    munmap(shared_counter, SHARED_MEM_SIZE);
+    close(fd);
+    shm_unlink(SHARED_MEM_NAME);
+    sem_close(sem);
+    sem_unlink(SEMAPHORE_NAME);
+
+    return 0;
+}
+
+
+5. Write a client C program that reads counter value between sem_wait() and sem_post(). Access shared memory using open().
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <sys/mman.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <semaphore.h>
+
+#define SHARED_MEM_NAME "/shared_mem"
+#define SEMAPHORE_NAME "/sem_example"
+#define SHARED_MEM_SIZE sizeof(int)
+
+int main() {
+    int fd;
+    int *shared_counter;
+    sem_t *sem;
+
+    // Opening the shared memory object
+    fd = shm_open(SHARED_MEM_NAME, O_RDWR, 0666);
+    if (fd == -1) {
+        perror("shm_open");
+        exit(EXIT_FAILURE);
+    }
+
+    // Mapping the shared memory object into the process's address space
+    shared_counter = mmap(NULL, SHARED_MEM_SIZE, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+    if (shared_counter == MAP_FAILED) {
+        perror("mmap");
+        exit(EXIT_FAILURE);
+    }
+
+    sem = sem_open(SEMAPHORE_NAME, 0);
+    if (sem == SEM_FAILED) {
+        perror("sem_open");
+        exit(EXIT_FAILURE);
+    }
+
+    while (1) {
+        sem_wait(sem);
+
+        printf("Counter value: %d\n", *shared_counter);
+
+        sem_post(sem);
+
+        sleep(1);
+    }
+
+    munmap(shared_counter, SHARED_MEM_SIZE);
+    close(fd);
+    sem_close(sem);
+
+    return 0;
+}
+ 
+
+6. Write a client (UDP) C program that calls sendto() to send string to server program knowing IP address and port number. 
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <arpa/inet.h>
+
+#define BUFFER_SIZE 1024
+
+int main(int argc, char *argv[]) {
+    if (argc != 3) {
+        fprintf(stderr, "Usage: %s <Server IP> <Server Port>\n", argv[0]);
+        exit(EXIT_FAILURE);
+    }
+
+    const char *server_ip = argv[1];
+    int server_port = atoi(argv[2]);
+
+    int sockfd;
+    struct sockaddr_in server_addr;
+    char buffer[BUFFER_SIZE];
+
+    if ((sockfd = socket(AF_INET, SOCK_DGRAM, 0)) < 0) {
+        perror("socket");
+        exit(EXIT_FAILURE);
+    }
+
+    memset(&server_addr, 0, sizeof(server_addr));
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_port = htons(server_port);
+
+    if (inet_pton(AF_INET, server_ip, &server_addr.sin_addr) <= 0) {
+        perror("inet_pton");
+        exit(EXIT_FAILURE);
+    }
+
+    printf("Enter the string to send: ");
+    fgets(buffer, BUFFER_SIZE, stdin);
+
+    ssize_t sent_len = sendto(sockfd, buffer, strlen(buffer), 0, (struct sockaddr *)&server_addr, sizeof(server_addr));
+    if (sent_len < 0) {
+        perror("sendto");
+        close(sockfd);
+        exit(EXIT_FAILURE);
+    }
+
+    printf("Sent %zd bytes to %s:%d\n", sent_len, server_ip, server_port);
+
+    close(sockfd);
+
+    return 0;
+}
+
+7. Design a Distributed Application using Message Passing Interface (MPI) for remote computation.
+#include <mpi.h>
+#include <stdio.h>
+#include <stdlib.h>
+
+int main(int argc, char** argv) {
+    int world_size, world_rank;
+    int *data = NULL;
+    int *sub_data = NULL;
+    int n = 100;
+    int i, local_sum = 0, total_sum = 0;
+    int elements_per_proc;
+
+    MPI_Init(&argc, &argv);
+
+    MPI_Comm_size(MPI_COMM_WORLD, &world_size);
+
+    MPI_Comm_rank(MPI_COMM_WORLD, &world_rank);
+
+    elements_per_proc = n / world_size;
+
+    if (world_rank == 0) {
+        data = (int*)malloc(n * sizeof(int));
+        for (i = 0; i < n; i++) {
+            data[i] = i + 1;
+        }
+    }
+
+    sub_data = (int*)malloc(elements_per_proc * sizeof(int));
+
+    MPI_Scatter(data, elements_per_proc, MPI_INT, sub_data, elements_per_proc, MPI_INT, 0, MPI_COMM_WORLD);
+
+    for (i = 0; i < elements_per_proc; i++) {
+        local_sum += sub_data[i];
+    }
+
+    // Reducing all local sums to the root process
+    MPI_Reduce(&local_sum, &total_sum, 1, MPI_INT, MPI_SUM, 0, MPI_COMM_WORLD);
+
+    if (world_rank == 0) {
+        printf("Total sum of array elements is %d\n", total_sum);
+    }
+
+    // Free up the allocated memory
+    if (world_rank == 0) {
+        free(data);
+    }
+    free(sub_data);
+
+    MPI_Finalize();
+
+    return 0; }
+
+8. Write a program to simulate logical clock synchronisation using Lamport’s logical clock algorithm and vector clocks.
+
+Lamport's Logical Clock Algorithm in C:
+#include <stdio.h>
+int max(int a, int b) {
+    return (a > b) ? a : b;
+}
+void lamport_clock(int events[][3], int n) {
+    int clocks[3] = {0, 0, 0};  // Initialize clocks for 3 processes (P1, P2, P3)
+
+    for (int i = 0; i < n; i++) {
+        int p = events[i][0];  // Process number
+        int action = events[i][1];  // 1 = send, 2 = receive
+        int other_clock = events[i][2];  // Time from sender (if receiving)
+
+        if (action == 1) {  // Sending event
+            clocks[p]++;
+            printf("Process P%d sends message at time %d\n", p + 1, clocks[p]);
+        } else if (action == 2) {  // Receiving event
+            clocks[p] = max(clocks[p], other_clock) + 1;
+            printf("Process P%d receives message at time %d\n", p + 1, clocks[p]);
+        }
+    }
+}
+
+int main() {
+    // Example events: {process, action, additional data (sent time)}
+    int events[5][3] = {
+        {0, 1, 0},  // P1 sends message
+        {1, 1, 0},  // P2 sends message
+        {0, 2, 2},  // P1 receives message with timestamp 2
+        {2, 1, 0},  // P3 sends message
+        {1, 2, 3}   // P2 receives message with timestamp 3
+    };
+    
+    lamport_clock(events, 5);
+    return 0; }
+Vector Clock Algorithm in C:
+
+#include <stdio.h>
+
+void update_vector_clock(int clock[], int received[], int n) {
+    for (int i = 0; i < n; i++) {
+        clock[i] = (clock[i] > received[i]) ? clock[i] : received[i];
+    }
+}
+
+void vector_clock_simulation(int events[][4], int n, int num_processes) {
+    int clocks[3][3] = {0};  // 3 processes, 3 vector clocks
+
+    for (int i = 0; i < n; i++) {
+        int p = events[i][0];
+        int action = events[i][1];  // 1 = send, 2 = receive
+        if (action == 1) {
+            clocks[p][p]++;
+            printf("Process P%d sends message at vector [", p + 1);
+            for (int j = 0; j < num_processes; j++)
+                printf("%d ", clocks[p][j]);
+            printf("]\n");
+        } else if (action == 2) {
+            int sender = events[i][2];
+            int received_clock[3];
+            for (int j = 0; j < num_processes; j++) {
+                received_clock[j] = events[i][3 + j];
+            }
+            update_vector_clock(clocks[p], received_clock, num_processes);
+            clocks[p][p]++;
+            printf("Process P%d receives message from P%d at vector [", p + 1, sender + 1);
+            for (int j = 0; j < num_processes; j++)
+                printf("%d ", clocks[p][j]);
+            printf("]\n");
+        }
+    }
+}
+
+int main() {
+    // Example events: {process, action, sender(optional), vector clock data (optional)}
+    int events[5][7] = {
+        {0, 1},              // P1 sends message
+        {1, 1},              // P2 sends message
+        {0, 2, 1, 1, 1, 0},  // P1 receives message from P2 with vector clock {1, 1, 0}
+        {2, 1},              // P3 sends message
+        {1, 2, 0, 2, 1, 0}   // P2 receives message from P1 with vector clock {2, 1, 0}
+    };
+
+    int num_processes = 3;
+    vector_clock_simulation(events, 5, num_processes);
+    return 0;
+}
+
+
+9. Write a program to simulate distributed mutual exclusion algorithm (Lamport and Ricart-Agrawala algorithms).
+
+Lamport's Distributed Mutual Exclusion Algorithm in C:
+
+#include <stdio.h>
+#include <stdlib.h>
+
+typedef struct {
+    int timestamp;
+    int id;
+} Request;
+
+void lamport_mutex(int id, int num_processes) {
+    int clock = 0;
+    Request queue[10];  // Priority queue for requests
+    int front = 0, rear = 0;
+    
+    // Process sends request to enter critical section
+    clock++;
+    queue[rear].timestamp = clock;
+    queue[rear].id = id;
+    rear++;
+    
+    printf("Process %d sends request at time %d\n", id, clock);
+    
+    // Process checks if it can enter critical section
+    if (front < rear && queue[front].id == id) {
+        printf("Process %d enters critical section\n", id);
+        front++;
+    }
+    
+    // Process exits critical section
+    printf("Process %d exits critical section\n", id);
+}
+
+int main() {
+    int num_processes = 3;
+    
+    // Simulate three processes requesting mutual exclusion
+    lamport_mutex(1, num_processes);
+    lamport_mutex(2, num_processes);
+    lamport_mutex(1, num_processes);
+    
+    return 0;
+}
+
+
+ Ricart-Agrawala Distributed Mutual Exclusion Algorithm in C:**
+
+
+#include <stdio.h>
+#include <stdbool.h>
+
+typedef struct {
+    int id;
+    int timestamp;
+    bool in_cs;  // in critical section or not
+} Process;
+
+void ricart_agrawala_request(Process *p, Process *other1, Process *other2) {
+    p->timestamp++;
+    p->in_cs = true;  // Process requests critical section
+    printf("Process %d requests critical section at time %d\n", p->id, p->timestamp);
+    
+    // Simulating message exchange
+    if (other1->timestamp < p->timestamp && !other1->in_cs) {
+        printf("Process %d replies to Process %d\n", other1->id, p->id);
+    }
+    if (other2->timestamp < p->timestamp && !other2->in_cs) {
+        printf("Process %d replies to Process %d\n", other2->id, p->id);
+    }
+    
+    printf("Process %d enters critical section\n", p->id);
+    p->in_cs = false;  // Exiting critical section
+}
+
+int main() {
+    Process p1 = {1, 0, false};
+    Process p2 = {2, 0, false};
+    Process p3 = {3, 0, false};
+    
+    ricart_agrawala_request(&p1, &p2, &p3);
+    ricart_agrawala_request(&p2, &p1, &p3);
+    
+    return 0;
+}
+
+
+10. Design a Distributed application using socket. Application consists of a server which takes an integer value from the client, calculates factorial and returns the result to the client program.
+Server-
+// server.c
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <string.h>
+#include <arpa/inet.h>
+
+#define PORT 8080
+
+// Function to calculate factorial
+unsigned long long factorial(int n) {
+    if (n == 0 || n == 1) return 1;
+    return n * factorial(n - 1);
+}
+
+int main() {
+    int server_fd, new_socket;
+    struct sockaddr_in address;
+    int addrlen = sizeof(address);
+    
+    unsigned long long result;
+
+    // Creating socket file descriptor
+    if ((server_fd = socket(AF_INET, SOCK_STREAM, 0)) == 0) {
+        perror("socket failed");
+        exit(EXIT_FAILURE);
+    }
+
+    address.sin_family = AF_INET;
+    address.sin_addr.s_addr = INADDR_ANY;
+    address.sin_port = htons(PORT);
+
+    // Binding socket to the address
+    if (bind(server_fd, (struct sockaddr *)&address, sizeof(address)) < 0) {
+        perror("bind failed");
+        close(server_fd);
+        exit(EXIT_FAILURE);
+    }
+
+    // Listening for connections
+    if (listen(server_fd, 3) < 0) {
+        perror("listen");
+        close(server_fd);
+        exit(EXIT_FAILURE);
+    }
+
+    printf("Server listening on port %d...\n", PORT);
+
+    while (1) {
+        char buffer[1024] = {0};
+        // Accepting a connection
+        if ((new_socket = accept(server_fd, (struct sockaddr *)&address, (socklen_t*)&addrlen)) < 0) {
+            perror("accept");
+            close(server_fd);
+            exit(EXIT_FAILURE);
+        }
+
+        // Reading integer from client
+        read(new_socket, buffer, 1024);
+        int number = atoi(buffer);
+
+        // Calculating factorial
+        printf("Input from Client: %d\n",number);
+        result = factorial(number);
+        printf("Factorical Value(server) : %llu\n",result);
+
+        // Sending result to client
+        snprintf(buffer, sizeof(buffer), "%llu", result);
+        send(new_socket, buffer, strlen(buffer), 0);
+
+        // Closing connection
+        close(new_socket);
+    }
+
+    close(server_fd);
+    return 0;
+}
+
+
+Client-
+// client.c
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <string.h>
+#include <arpa/inet.h>
+
+#define PORT 8080
+
+int main() {
+    int sock = 0;
+    struct sockaddr_in serv_addr;
+    char buffer[1024] = {0};
+
+    // Creating socket file descriptor
+    if ((sock = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
+        printf("\n Socket creation error \n");
+        return -1;
+    }
+
+    serv_addr.sin_family = AF_INET;
+    serv_addr.sin_port = htons(PORT);
+
+    // Convert IPv4 and IPv6 addresses from text to binary form
+    if (inet_pton(AF_INET, "127.0.0.1", &serv_addr.sin_addr) <= 0) {
+        printf("\nInvalid address/ Address not supported \n");
+        return -1;
+    }
+
+    // Connect to the server
+    if (connect(sock, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0) {
+        printf("\nConnection Failed \n");
+        return -1;
+    }
+
+    // Sending integer to server
+    int number;
+    printf("Enter an integer: ");
+    scanf("%d", &number);
+    snprintf(buffer, sizeof(buffer), "%d", number);
+    send(sock, buffer, strlen(buffer), 0);
+
+    // Reading result from server
+    read(sock, buffer, 1024);
+    printf("Factorial result: %s\n", buffer);
+
+    close(sock);
+    return 0;
+}
+
+ 
+ 
+
+11. Find out the list of users who owns a file having maximum size in the current working directory using Map Reduce Program.
+#include <stdio.h>
+#include <stdlib.h>
+#include <dirent.h>
+#include <sys/stat.h>
+#include <pwd.h>
+#include <string.h>
+#include <limits.h>
+#include <unistd.h> // Add this to resolve getcwd()
+
+struct FileInfo {
+    char owner[256];
+    char filename[PATH_MAX];
+    off_t filesize;
+};
+
+// Map: Extract file size and owner information
+void getFileInfo(const char *filepath, struct FileInfo *fileInfo) {
+    struct stat fileStat;
+    if (stat(filepath, &fileStat) == 0) {
+        struct passwd *pw = getpwuid(fileStat.st_uid);
+        fileInfo->filesize = fileStat.st_size;
+        strncpy(fileInfo->owner, pw->pw_name, 255);
+        strncpy(fileInfo->filename, filepath, PATH_MAX);
+    }
+}
+
+// Reduce: Find the file with the maximum size
+struct FileInfo findMaxFileSize(struct FileInfo *files, int fileCount) {
+    struct FileInfo maxFile = files[0];
+    for (int i = 1; i < fileCount; i++) {
+        if (files[i].filesize > maxFile.filesize) {
+            maxFile = files[i];
+        }
+    }
+    return maxFile;
+}
+
+int main() {
+    DIR *dir;
+    struct dirent *entry;
+    struct FileInfo files[1024]; // Assuming a max of 1024 files in the directory
+    int fileCount = 0;
+    char currentDir[PATH_MAX];
+
+    // Get the current working directory
+    if (getcwd(currentDir, sizeof(currentDir)) == NULL) { // Fix for getcwd()
+        perror("getcwd() error");
+        return 1;
+    }
+
+    // Open the current directory
+    if ((dir = opendir(currentDir)) == NULL) {
+        perror("opendir() error");
+        return 1;
+    }
+
+    // Map phase: Iterate through files in the directory
+    while ((entry = readdir(dir)) != NULL) {
+        char filepath[PATH_MAX];
+
+        // Prevent truncation issue by checking if snprintf() fits
+        if (snprintf(filepath, PATH_MAX, "%s/%s", currentDir, entry->d_name) >= PATH_MAX) {
+            fprintf(stderr, "Path is too long: %s/%s\n", currentDir, entry->d_name);
+            continue;
+        }
+
+        // Skip directories and hidden files
+        if (entry->d_type == DT_REG) {
+            getFileInfo(filepath, &files[fileCount]);
+            fileCount++;
+        }
+    }
+    closedir(dir);
+
+    if (fileCount == 0) {
+        printf("No files found in the directory.\n");
+        return 0;
+    }
+
+    // Reduce phase: Find the file with the maximum size
+    struct FileInfo maxFile = findMaxFileSize(files, fileCount);
+
+    // Output result
+    printf("File with maximum size:\n");
+    printf("Filename: %s\n", maxFile.filename);
+    printf("Owner: %s\n", maxFile.owner);
+    printf("Size: %ld bytes\n", maxFile.filesize);
+
+    return 0;
+}
+
+ 
+12. Implement concurrent echo client-server application.  
+Server.c   
+#include <stdio.h>   
+#include <stdlib.h>   
+#include <string.h>   
+#include <unistd.h>   
+#include <arpa/inet.h>   
+   
+#define PORT 12347  #define BUFFER_SIZE 1024   int main() {    int server_socket, client_socket;    struct sockaddr_in server_addr, client_addr;    socklen_t client_addr_len = sizeof(client_addr);    char buffer[BUFFER_SIZE];    ssize_t bytes_received;      server_socket = socket(AF_INET, SOCK_STREAM,  
+0);    if (server_socket < 0) {        perror("Socket creation failed");        exit(EXIT_FAILURE);   
+   }      server_addr.sin_family = 
+AF_INET;    server_addr.sin_addr.s_addr = INADDR_ANY;    server_addr.sin_port = htons(PORT);   
+   
+   if (bind(server_socket, (struct sockaddr*)&server_addr, sizeof(server_addr)) < 0) {        perror("Bind failed");        close(server_socket);        exit(EXIT_FAILURE);   
+   }     if (listen(server_socket, 1)  
+< 0) {        perror("Listen failed");        close(server_socket);        exit(EXIT_FAILURE);      }     printf("Server listening on port %d\n", PORT);   
+    while (1) {        client_socket = accept(server_socket, (struct sockaddr*)&client_addr, &client_addr_len);        if (client_socket < 0) {            perror("Accept failed");            continue;   
+       }          printf("Accepted connection from %s\n", inet_ntoa(client_addr.sin_addr));          while ((bytes_received = recv(client_socket, buffer, sizeof(buffer)   
+- 1, 0)) > 0) {            buffer[bytes_received] = '\0';  // Null-terminate the received data            fgets(buffer, sizeof(buffer), stdout);  send(client_socket, buffer, bytes_received, 0);  // Echo the data back  }          close(client_socket);   
+   }      close(server_socket);    return 0;   
+}   
+   
+Client .c
+#include <stdio.h>   
+#include <stdlib.h>   
+#include <string.h>   
+#include <unistd.h>   
+#include <arpa/inet.h>   
+   
+#define PORT 12347  #define BUFFER_SIZE 1024   int main() {    int client_socket;    struct sockaddr_in server_addr;    char buffer[BUFFER_SIZE];     ssize_t bytes_sent, bytes_received;      client_socket = socket(AF_INET, SOCK_STREAM,  
+0);    if (client_socket < 0) {        perror("Socket creation failed");        exit(EXIT_FAILURE);   
+   }     server_addr.sin_family = AF_INET;    server_addr.sin_addr.s_addr = inet_addr("127.0.0.1");    server_addr.sin_port = htons(PORT);      if 
+(connect(client_socket, (struct sockaddr*)&server_addr, sizeof(server_addr)) < 0) {        perror("Connection 
+failed");        close(client_socket);        exit(EXIT_FAILURE);   
+   }     while (1) {        printf("Send message: ");        fgets(buffer, sizeof(buffer), stdin);        buffer[strcspn(buffer, "\n")] = '\0';  // Remove newline character   
+   
+       bytes_sent = send(client_socket, buffer, strlen(buffer), 0);        if (bytes_sent < 0) {   
+           perror("Send failed");            break;         }          bytes_received = recv(client_socket, buffer, sizeof(buffer) - 1,   
+0);        if (bytes_received < 0) {            perror("Receive failed"); break;         }          buffer[bytes_received] = '\0';  // Null-terminate the received data printf("Received: %s\n", buffer);   
+   }     close(client_socket);    return 0;   
+}   
+   
+ 
+
+13. Implement a client-server program in which the server accepts a connection from a client and updates its own Master table by adding the client information and send the updated table to client, so client can update their own table. Refer the following table format.
+
+
+
+
+
+
+
+// server.c   
+#include <stdio.h>   
+#include <stdlib.h>   
+#include <string.h>   
+#include <unistd.h>   
+#include <arpa/inet.h>   
+   
+#define PORT 12349   
+#define MAX_CLIENTS 100  #define BUFFER_SIZE 1024   typedef struct {    char node[20];      char ip[INET_ADDRSTRLEN];    int port;  } TableEntry;   
+   
+TableEntry server_table[MAX_CLIENTS]; int table_size = 0;   
+   
+void update_table(const char* ip, int port) {   
+   // Check if the IP and port are already in the table    int i;    for (i = 0; i < table_size; i++) {   
+       if (strcmp(server_table[i].ip, ip) == 0 && server_table[i].port == port) {            return;   
+       }   
+   }   
+   
+   // Add new entry to the table    snprintf(server_table[table_size].node, sizeof(server_table[table_size].node), "Client-%d", table_size + 1);    strncpy(server_table[table_size].ip, ip, sizeof(server_table[table_size].ip));    server_table[table_size].port 
+= port;    table_size++;   
+}  void print_table() {    printf("Master Table:\n");    int i;    for (i = 0; i < table_size; i++) {        printf("Node: %s, IP: %s, Port: 
+%d\n", server_table[i].node, server_table[i].ip, server_table[i].port);   
+   }    printf("\n");   
+}  void send_table(int client_socket) {    write(client_socket, &table_size, sizeof(int));  // Send table size    write(client_socket, server_table, sizeof(TableEntry) * table_size);  // Send table entries   
+}  int main() {    int server_socket, client_socket;   
+   struct sockaddr_in server_addr, client_addr;    socklen_t client_addr_len = sizeof(client_addr);      server_socket = socket(AF_INET, SOCK_STREAM,  
+0);    if (server_socket < 0) {        perror("Socket creation failed");        exit(EXIT_FAILURE);   
+   }     server_addr.sin_family = AF_INET;    server_addr.sin_addr.s_addr 	= 	INADDR_ANY;    server_addr.sin_port = htons(PORT);      if 
+	(bind(server_socket, 	(struct 
+sockaddr*)&server_addr, sizeof(server_addr)) < 0) {        perror("Bind failed");        close(server_socket);        exit(EXIT_FAILURE);   
+   }     if (listen(server_socket, 5)  
+< 0) {        perror("Listen failed");        close(server_socket);        exit(EXIT_FAILURE);   
+   }     printf("Server is listening on port %d\n", PORT);   
+    while (1) {        client_socket = accept(server_socket, (struct sockaddr*)&client_addr, &client_addr_len);        if (client_socket < 0) {            perror("Accept failed");            continue;   
+       }          char client_ip[INET_ADDRSTRLEN];        inet_ntop(AF_INET, &client_addr.sin_addr, client_ip, sizeof(client_ip));        int client_port = ntohs(client_addr.sin_port);          update_table(client_ip, client_port);   
+         
+       // Print the updated master table        print_table();   
+         
+send_table(client_socket);   
+        close(client_socket);      }     close(server_socket);    return 0;   
+}   
+   
+Client.c   
+// client.c   
+#include <stdio.h>   
+#include <stdlib.h>   
+#include <string.h>   
+#include <unistd.h>   
+#include <arpa/inet.h>   
+   
+#define PORT 12349  #define BUFFER_SIZE 1024   typedef struct {    char node[20];    char ip[INET_ADDRSTRLEN];    int port;   
+} TableEntry;   
+   
+void receive_table(int server_socket) {    int table_size;    read(server_socket, &table_size, sizeof(int));  // Read table size      TableEntry* table = (TableEntry*)malloc(sizeof(TableEntry) * table_size);    if (table == NULL) {        perror("Memory allocation failed");        exit(EXIT_FAILURE);      }  
+read(server_socket, table, sizeof(TableEntry) * table_size);  // Read table entries   
+    printf("Received table:\n");    int i;    for (i = 0; i < table_size; i++) {        printf("Node: %s, IP: %s, Port: %d\n", table[i].node, table[i].ip, table[i].port);   
+   }     free(table);   
+}  int main() {    int client_socket;    struct sockaddr_in server_addr;      client_socket = socket(AF_INET, SOCK_STREAM,  
+0);    if (client_socket < 0) {        perror("Socket creation failed");        exit(EXIT_FAILURE);   
+   }     server_addr.sin_family = AF_INET;    server_addr.sin_port 
+= htons(PORT);     
+server_addr.sin_addr.s_addr = inet_addr("127.0.0.1");   
+   
+   if (connect(client_socket, (struct sockaddr*)&server_addr, sizeof(server_addr)) < 0) {        perror("Connect failed");        close(client_socket);        exit(EXIT_FAILURE);   
+   }     receive_table(client_socket);       close(client_socket);    
+return 0;   
+}   
+ 
+
+14. Develop a client-server program to implement a date-time server and client. Upon connection establishment, the server should send its current date, time and CPU load information to its clients.   
+   
+Server.c   
+// server.c   
+#include <stdio.h>   
+#include <stdlib.h>   
+#include <string.h>   
+#include <unistd.h>   
+#include <arpa/inet.h>   
+#include <time.h>   
+#include <sys/sysinfo.h>   
+   
+#define PORT 12350  #define BUFFER_SIZE 256   void get_server_info(char *info_buffer, size_t buffer_size)  
+{   
+   // Get current time    time_t now = time(NULL);    struct tm 
+*tm_info = localtime(&now);      char time_str[64];    strftime(time_str, sizeof(time_str), "%Y-%m- 
+%d %H:%M:%S", tm_info);      // Get CPU load    struct sysinfo sys_info;    if  
+(sysinfo(&sys_info) != 0) {        perror("sysinfo failed");         snprintf(info_buffer, buffer_size, "Failed to retrieve system info.");        return;   
+   }    
+   float loadavg = (float)sys_info.loads[0] / 65536.0; // Convert to load average in format (0.00)   
+   snprintf(info_buffer, buffer_size, "Date/Time: %s\nCPU Load: %.2f\n", time_str, loadavg);   
+}  void handle_client(int client_socket) {    char info_buffer[BUFFER_SIZE];    get_server_info(info_buffer, sizeof(info_buffer));    send(client_socket, info_buffer, strlen(info_buffer), 0);    close(client_socket);   
+}  int main() {    int server_socket, client_socket;    struct sockaddr_in server_addr, client_addr;    socklen_t client_addr_len = sizeof(client_addr);      server_socket = socket(AF_INET, SOCK_STREAM,  
+0);    if (server_socket < 0) {        perror("Socket creation failed");        exit(EXIT_FAILURE);   
+   }     server_addr.sin_family = AF_INET;    server_addr.sin_addr.s_addr 	= 	INADDR_ANY;    server_addr.sin_port = htons(PORT);      if 
+	(bind(server_socket, 	(struct 
+sockaddr*)&server_addr, sizeof(server_addr)) < 0) {        perror("Bind failed");        close(server_socket);        exit(EXIT_FAILURE);   
+   }     if (listen(server_socket, 5)  
+< 0) {        perror("Listen failed");        close(server_socket);        exit(EXIT_FAILURE);   
+   }     printf("Server is listening on port %d\n", PORT);       while (1)  
+{          client_socket = accept(server_socket, (struct sockaddr*)&client_addr, &client_addr_len);        if 
+(client_socket < 0) {            perror("Accept failed");            continue;          }          handle_client(client_socket);      }     close(server_socket);    return 0;   
+}   
+ 
+Client.c
+
+// client.c   
+#include <stdio.h>   
+#include <stdlib.h>   
+#include <string.h>   
+#include <unistd.h>   
+#include <arpa/inet.h>   
+   
+#define PORT 12350   
+#define BUFFER_SIZE 256   
+   
+int main() {    int client_socket;    struct sockaddr_in server_addr;    char buffer[BUFFER_SIZE];      client_socket = socket(AF_INET, SOCK_STREAM,  
+0);    if (client_socket < 0) {        perror("Socket creation failed");        exit(EXIT_FAILURE);      }     server_addr.sin_family = AF_INET;   
+   server_addr.sin_port 	= 	htons(PORT);    
+server_addr.sin_addr.s_addr = inet_addr("127.0.0.1");      
+	if 	(connect(client_socket, 	(struct 
+sockaddr*)&server_addr, sizeof(server_addr)) < 0) {        perror("Connect failed");        close(client_socket);        exit(EXIT_FAILURE);   
+   }     int bytes_received = recv(client_socket, buffer, sizeof(buffer) - 1,   
+0);    if (bytes_received < 0) {        perror("Receive failed");        close(client_socket);        exit(EXIT_FAILURE);   
+   }     buffer[bytes_received] = '\0'; // Null-terminate the received data    printf("Received from server:\n%s", buffer);       close(client_socket);    return 0;   
+}   
+   
+Output:   
+    
+   
+    
+   
+
+15. TCP Server Code (server1.c and server2.c)  
+Each server will listen for a connection and either return the CPU load or perform the string conversion.  
+  
+#include <stdio.h>  
+#include <string.h>  
+#include <stdlib.h>  
+#include <unistd.h>  
+#include <arpa/inet.h>  
+#include <ctype.h>  
+  
+#define PORT 12345 // Use a different port for server2 (e.g., 12346)  
+#define BUFFER_SIZE 1024  
+  
+// Function to calculate CPU usage (dummy value for simplicity) float get_cpu_load() {  
+    return (rand() % 100) / 100.0; // Return a random CPU usage between 0 and 1  
+}    
+// Function to convert a string to uppercase void to_uppercase(char *str) {  
+    for (int i = 0; str[i]; i++) {  
+        str[i] = toupper(str[i]);  
+    }  
+}  
+  
+int main() {  
+    int server_socket, client_socket;     struct sockaddr_in server_addr, client_addr;     char buffer[BUFFER_SIZE];  
+    socklen_t addr_len;  
+  
+    // Create socket  
+    server_socket = socket(AF_INET, SOCK_STREAM, 0);     
+server_addr.sin_family = AF_INET;     server_addr.sin_port 
+= htons(PORT);      server_addr.sin_addr.s_addr = INADDR_ANY;  
+  
+    // Bind the socket to an address  
+    bind(server_socket, (struct sockaddr *)&server_addr, sizeof(server_addr));  
+  
+    // Start listening for connections     listen(server_socket, 5);     printf("Server listening on port %d...\n", PORT);  
+  
+    while (1) {  
+        addr_len = sizeof(client_addr);  
+        client_socket = accept(server_socket, (struct sockaddr *)&client_addr, &addr_len);         
+printf("Accepted connection from load balancer...\n");  
+  
+        // Receive command (either "CPU" for load or string for conversion)         recv(client_socket, buffer, BUFFER_SIZE, 0);  
+        buffer[strlen(buffer)] = '\0'; // Ensure null termination  
+  
+        if (strcmp(buffer, "CPU") == 0) {  
+            // Send CPU load  
+            float cpu_load = get_cpu_load();  
+            send(client_socket, &cpu_load, sizeof(cpu_load), 0);             
+printf("Sent CPU load: %.2f\n", cpu_load);  
+        } else {  
+            // Convert string to uppercase             to_uppercase(buffer);             send(client_socket, buffer, strlen(buffer), 0);             printf("Sent 
+uppercase string: %s\n", buffer);  
+        }  
+  
+        close(client_socket);  
+    }  
+  
+    close(server_socket);  
+    return 0;  
+}  
+  
+Output:  
+ 
+ 
+
+1.	16. Load Balancer Code (broker.c)  
+The load balancer will handle client requests, compare the CPU usage of the two servers, forward the string to the least-loaded server, and return the result to the client.  
+  
+#include <stdio.h>  
+#include <string.h>  
+#include <stdlib.h>  
+#include <unistd.h>  
+#include <arpa/inet.h>  
+  
+#define SERVER1_PORT 12345  
+#define SERVER2_PORT 12346  
+#define BUFFER_SIZE 1024  
+  
+// Function to query CPU load from a server float get_cpu_load(int port) {      int sock;  
+    struct sockaddr_in server_addr;  
+    float cpu_load;  
+  
+    // Create socket  
+    sock = socket(AF_INET, SOCK_STREAM, 0);     
+server_addr.sin_family = AF_INET;     server_addr.sin_port 
+= htons(port);      server_addr.sin_addr.s_addr = inet_addr("127.0.0.1");  
+  
+    // Connect to the server  
+    connect(sock, (struct sockaddr *)&server_addr, sizeof(server_addr));  
+  
+    // Send "CPU" request to get CPU load  
+    send(sock, "CPU", 3, 0);  
+    recv(sock, &cpu_load, sizeof(cpu_load), 0);  
+  
+    close(sock);  
+    return cpu_load;  
+}  
+  
+// Function to send a string to a server for conversion  void send_string_to_server(int port, char *str, char *result) {     
+int sock;  
+    struct sockaddr_in server_addr;  
+  
+    // Create socket  
+    sock = socket(AF_INET, SOCK_STREAM, 0);     server_addr.sin_family = AF_INET;     server_addr.sin_port = htons(port);     server_addr.sin_addr.s_addr = inet_addr("127.0.0.1");  
+  
+    // Connect to the server  
+    connect(sock, (struct sockaddr *)&server_addr, sizeof(server_addr));  
+  
+    // Send the string for conversion     send(sock, str, strlen(str), 0);  
+    recv(sock, result, BUFFER_SIZE, 0);  
+  
+    close(sock);  
+}  
+  
+int main() {  
+    int broker_socket, client_socket;     struct sockaddr_in broker_addr, client_addr;     char buffer[BUFFER_SIZE], result[BUFFER_SIZE];     socklen_t addr_len;  
+  
+    // Create socket for load balancer  
+    broker_socket = socket(AF_INET, SOCK_STREAM, 0);     
+broker_addr.sin_family = AF_INET;     broker_addr.sin_port = htons(12347); // Broker server port     
+broker_addr.sin_addr.s_addr = INADDR_ANY;  
+  
+    // Bind the socket  
+    bind(broker_socket, (struct sockaddr *)&broker_addr, sizeof(broker_addr));     
+listen(broker_socket, 5);  
+    printf("Load Balancer listening on port 12347...\n");  
+  
+    while (1) {  
+        addr_len = sizeof(client_addr);  
+        client_socket = accept(broker_socket, (struct sockaddr *)&client_addr, &addr_len);         
+printf("Accepted connection from client...\n");  
+  
+        // Receive string from the client         recv(client_socket, buffer, BUFFER_SIZE, 0);  
+        buffer[strlen(buffer)] = '\0'; // Ensure null termination  
+  
+        // Get CPU loads from both servers         float cpu1 = get_cpu_load(SERVER1_PORT);         float cpu2 = get_cpu_load(SERVER2_PORT);  
+        printf("CPU load - Server 1: %.2f, Server 2: %.2f\n", cpu1, cpu2);  
+  
+        // Send the string to the server with the lower CPU load         if (cpu1 < cpu2) {  
+            send_string_to_server(SERVER1_PORT, buffer, result);  
+        } else {  
+            send_string_to_server(SERVER2_PORT, buffer, result);  
+        }  
+  
+        // Send the result back to the client         send(client_socket, result, strlen(result), 0);         printf("Sent result back to client: %s\n", result);  
+  
+        close(client_socket);  
+    }  
+  
+    close(broker_socket);  
+    return 0;  
+}  
+  
+Output:  
+
+ 
+
+17 .  Client Code (client.c)  
+The client sends a string to the load balancer and receives the converted string back.  
+  
+#include <stdio.h>  
+#include <string.h>  
+#include <stdlib.h>  
+#include <unistd.h>  
+#include <arpa/inet.h>  
+  
+#define BROKER_PORT 12347  
+#define BUFFER_SIZE 1024  
+  
+int main() {  
+    int sock;  
+    struct sockaddr_in broker_addr;  
+    char buffer[BUFFER_SIZE], result[BUFFER_SIZE];  
+  
+    // Create socket  
+    sock = socket(AF_INET, SOCK_STREAM, 0);     
+broker_addr.sin_family = AF_INET;     broker_addr.sin_port = htons(BROKER_PORT);     broker_addr.sin_addr.s_addr = inet_addr("127.0.0.1");  
+  
+    // Connect to load balancer  
+    connect(sock, (struct sockaddr *)&broker_addr, sizeof(broker_addr));  
+  
+    // Input string to send     printf("Enter a string to convert: ");     fgets(buffer, BUFFER_SIZE, stdin);     buffer[strlen(buffer) - 1] = '\0'; // Remove newline  
+  
+    // Send string to load balancer  
+    send(sock, buffer, strlen(buffer), 0);  
+  
+    // Receive the uppercase string     recv(sock, result, BUFFER_SIZE, 0);  
+    printf("Received uppercase string: %s\n", result);  
+  
+    close(sock);  
+    return 0;  
+}  
+  
+Output:  
+    
+
+
+18. Q1. Write a program to find out the list of users who owns a file having maximum size in the current working directory using Map Reduce Program. 
+Soln.  
+#include <stdio.h> 
+#include <stdlib.h> 
+#include <string.h> 
+#include <dirent.h> 
+#include <sys/stat.h> 
+#include <pwd.h> 
+  
+#define MAX_FILENAME 256 
+  
+int main() {     struct dirent *entry; 
+    struct stat fileStat;     char path[MAX_FILENAME];     char 
+largestOwner[MAX_FILENAME] = ""; 
+    long largestSize = 0; 
+  
+    // Open the current directory     
+DIR *dp = opendir(".");     if (dp 
+== NULL) {         perror("opendir"); 
+        return EXIT_FAILURE; 
+    } 
+  
+    // Iterate through directory entries 
+    while ((entry = readdir(dp)) != NULL) {         // Ignore current and parent directory entries         if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) {             
+continue; 
+        } 
+  
+        // Get file statistics         if (stat(entry->d_name, &fileStat) == -1) {             perror("stat");             continue; 
+        } 
+  
+        // Check if it's a regular file         if 
+(S_ISREG(fileStat.st_mode)) { 
+            // Get the file size             long size = fileStat.st_size; 
+  
+            // Check if it's the largest file so far             if (size > largestSize) {                 largestSize = size; 
+                struct passwd *pw = getpwuid(fileStat.st_uid);                 
+if (pw != NULL) { 
+                    strcpy(largestOwner, pw->pw_name); 
+                } else { 
+                    strcpy(largestOwner, "unknown"); 
+                } 
+            } else if (size == largestSize) { 
+                // Handle case for multiple owners of the same size                 struct passwd *pw = getpwuid(fileStat.st_uid);                 if (pw != NULL && strcmp(pw>pw_name, largestOwner) != 0) {                     strcat(largestOwner, ", ");                     strcat(largestOwner, pw->pw_name); 
+                } 
+            } 
+        } 
+    } 
+  
+    // Close the directory     closedir(dp); 
+  
+    // Output the result     if (largestSize > 0) { 
+        printf("Largest file size: %ld bytes\n", largestSize);         printf("Owner(s): %s\n", largestOwner); 
+    } else {         printf("No regular files found in the current directory.\n"); 
+    } 
+  
+    return EXIT_SUCCESS; 
+} 
+ 
+
+
+19. . Implement RPC mechanism for a file transfer across a network in ‘C’. 
+Soln.  
+Server.c: 
+#include <stdio.h> 
+#include <stdlib.h> 
+#include <string.h> 
+#include <unistd.h> 
+#include <arpa/inet.h> 
+#include <fcntl.h> 
+  
+#define PORT 8080 
+#define BUFFER_SIZE 1024 
+  
+void send_file(int new_socket, const char *filename) {     int file = open(filename, O_RDONLY); 
+    if (file < 0) {         perror("File open error"); 
+        return; 
+    } 
+     
+    char buffer[BUFFER_SIZE];     ssize_t bytes_read; 
+  
+    while ((bytes_read = read(file, buffer, BUFFER_SIZE)) > 0) {         send(new_socket, 
+buffer, bytes_read, 0); 
+    } 
+  
+    close(file); 
+}   
+int main() {     int server_fd, new_socket; 	 	 	 	 	struct sockaddr_in address;     int opt = 
+1;     int addrlen = sizeof(address); 
+  
+    // Create socket     if ((server_fd = socket(AF_INET, SOCK_STREAM, 0)) == 0) {         perror("Socket failed");         exit(EXIT_FAILURE); 
+    } 
+  
+    // Set socket options     setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)); 
+  
+    // Define the server address     address.sin_family = AF_INET;     address.sin_addr.s_addr = INADDR_ANY;     address.sin_port = htons(PORT); 
+  
+    // Bind the socket     if (bind(server_fd, (struct sockaddr *)&address, sizeof(address)) < 0) {         
+perror("Bind failed"); 
+        exit(EXIT_FAILURE); 
+    } 
+  
+    // Listen for connections     if (listen(server_fd, 3) < 0) {         perror("Listen failed");         exit(EXIT_FAILURE); 
+    } 
+  
+    printf("Server listening on port %d...\n", PORT); 
+  
+    while (1) { 
+        // Accept a new connection         if ((new_socket = accept(server_fd, (struct sockaddr *)&address, (socklen_t*)&addrlen)) < 0) {             
+perror("Accept failed"); 
+            exit(EXIT_FAILURE); 
+        } 
+  
+        char filename[BUFFER_SIZE];         read(new_socket, 
+filename, sizeof(filename));         printf("Requested file: %s\n", filename);         send_file(new_socket, filename);         close(new_socket); 
+    } 
+  
+    return 0; 
+} 
+Client.c: 
+#include <stdio.h> 
+#include <stdlib.h> 
+#include <string.h> 
+#include <unistd.h> 
+#include <arpa/inet.h> 
+  
+#define PORT 8080 
+#define BUFFER_SIZE 1024 
+  
+void receive_file(int socket, const char *filename) {     FILE *file = fopen(filename, "wb");     if (file == NULL) {         
+perror("File open error"); 
+        return; 
+    } 
+  
+    char buffer[BUFFER_SIZE];     ssize_t bytes_received; 
+  
+    while ((bytes_received = recv(socket, buffer, BUFFER_SIZE, 0)) > 0) {         fwrite(buffer, sizeof(char), bytes_received, file); 
+    } 
+  
+    fclose(file); 
+}   
+int main() {     int sock = 0;     struct sockaddr_in serv_addr; 
+    char *filename = "received_file.txt"; 
+  
+    // Create socket 
+    if ((sock = socket(AF_INET, SOCK_STREAM, 0)) < 0) {         printf("\n Socket creation error \n");         return -1; 
+    } 
+  
+    serv_addr.sin_family = AF_INET;     serv_addr.sin_port = htons(PORT); 
+  
+    // Convert IPv4 and IPv6 addresses from text to binary form     if (inet_pton(AF_INET, 	"127.0.0.1", 	&serv_addr.sin_addr) 	<= 	0) 	{         printf("\nInvalid address/ Address not supported \n");         return -1; 
+    } 
+  
+    // Connect to server     if (connect(sock, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0) {         
+printf("\nConnection Failed \n");         return -1; 
+    } 
+  
+    // Send the filename to the server     char *request_filename = 
+"example.txt"; // Change to your file name     send(sock, request_filename, strlen(request_filename) + 1, 0);     printf("Requested file: %s\n", request_filename); 
+  
+    // Receive the file     receive_file(sock, filename); 
+    printf("File received: %s\n", filename); 
+  
+    close(sock);     
+return 0; 
+} 
+
+
+20. Design a distributed application which consists of a server and client using threads.
+Code:
+Server (Multithreaded Server using Sockets and Threads in C)
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <pthread.h>
+#include <unistd.h>
+#include <arpa/inet.h>
+
+#define PORT 8080
+#define BUFFER_SIZE 1024
+
+void *client_handler(void *socket_desc) {
+    int client_sock = *(int *)socket_desc;
+    char buffer[BUFFER_SIZE];
+
+    while (1) {
+        memset(buffer, 0, BUFFER_SIZE);
+        int read_size = read(client_sock, buffer, BUFFER_SIZE - 1);
+        if (read_size <= 0) break;
+        printf("Client: %s", buffer);
+
+        send(client_sock, buffer, strlen(buffer), 0);
+    }
+
+    close(client_sock);
+    free(socket_desc);
+    return NULL;
+}
+
+int main() {
+    int server_sock, client_sock, *new_sock;
+    struct sockaddr_in server_addr, client_addr;
+    socklen_t addr_len = sizeof(struct sockaddr_in);
+
+    server_sock = socket(AF_INET, SOCK_STREAM, 0);
+    if (server_sock == -1) {
+        perror("Socket creation failed");
+        exit(EXIT_FAILURE);
+    }
+
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_addr.s_addr = INADDR_ANY;
+    server_addr.sin_port = htons(PORT);
+
+    if (bind(server_sock, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0) {
+        perror("Bind failed");
+        close(server_sock);
+        exit(EXIT_FAILURE);
+    }
+
+    listen(server_sock, 3);
+    printf("Server listening on port %d...
+", PORT);
+
+    while ((client_sock = accept(server_sock, (struct sockaddr *)&client_addr, &addr_len))) {
+        printf("Client connected.
+");
+
+        pthread_t client_thread;
+        new_sock = malloc(1);
+        *new_sock = client_sock;
+
+        if (pthread_create(&client_thread, NULL, client_handler, (void *)new_sock) < 0) {
+            perror("Thread creation failed");
+            free(new_sock);
+            close(client_sock);
+        }
+    }
+
+    if (client_sock < 0) {
+        perror("Accept failed");
+        close(server_sock);
+    }
+
+    close(server_sock);
+    return 0;
+}
+
+Client
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <arpa/inet.h>
+
+#define PORT 8080
+#define BUFFER_SIZE 1024
+
+int main() {
+    int sock;
+    struct sockaddr_in server_addr;
+    char buffer[BUFFER_SIZE];
+
+    sock = socket(AF_INET, SOCK_STREAM, 0);
+    if (sock == -1) {
+        perror("Socket creation failed");
+        exit(EXIT_FAILURE);
+    }
+
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_port = htons(PORT);
+    server_addr.sin_addr.s_addr = inet_addr("127.0.0.1");
+
+    if (connect(sock, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0) {
+        perror("Connection failed");
+        close(sock);
+        exit(EXIT_FAILURE);
+    }
+
+    printf("Connected to the server. Type your messages:
+");
+
+    while (1) {
+        memset(buffer, 0, BUFFER_SIZE);
+        fgets(buffer, BUFFER_SIZE, stdin);
+        send(sock, buffer, strlen(buffer), 0);
+
+        memset(buffer, 0, BUFFER_SIZE);
+        int read_size = read(sock, buffer, BUFFER_SIZE - 1);
+        if (read_size <= 0) break;
+        printf("Server: %s", buffer);
+    }
+
+    close(sock);
+    return 0;
+}
+
+Sample Output:
+Server Terminal:
+Server listening on port 8080...
+Client connected.
+Client: Hello Server!
+Client: How are you?
+Client Terminal:
+Connected to the server. Type your messages:
+Hello Server!
+Server: Hello Server!
+How are you?
+Server: How are you?
+20.
+Design a distributed application which consists of a stateless server using socket primitives.
+Code:
+Stateless Server
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <arpa/inet.h>
+
+#define PORT 8081
+#define BUFFER_SIZE 1024
+
+int main() {
+    int server_sock;
+    struct sockaddr_in server_addr, client_addr;
+    socklen_t addr_len = sizeof(client_addr);
+    char buffer[BUFFER_SIZE];
+
+    server_sock = socket(AF_INET, SOCK_DGRAM, 0);
+    if (server_sock == -1) {
+        perror("Socket creation failed");
+        exit(EXIT_FAILURE);
+    }
+
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_addr.s_addr = INADDR_ANY;
+    server_addr.sin_port = htons(PORT);
+
+    if (bind(server_sock, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0) {
+        perror("Bind failed");
+        close(server_sock);
+        exit(EXIT_FAILURE);
+    }
+
+    printf("Stateless server listening on port %d...
+", PORT);
+
+    while (1) {
+        memset(buffer, 0, BUFFER_SIZE);
+        int len = recvfrom(server_sock, buffer, BUFFER_SIZE - 1, 0, (struct sockaddr *)&client_addr, &addr_len);
+        if (len < 0) continue;
+
+        printf("Received: %s", buffer);
+
+        sendto(server_sock, buffer, strlen(buffer), 0, (struct sockaddr *)&client_addr, addr_len);
+    }
+
+    close(server_sock);
+    return 0;
+}
+
+Client
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <arpa/inet.h>
+
+#define PORT 8081
+#define BUFFER_SIZE 1024
+
+int main() {
+    int sock;
+    struct sockaddr_in server_addr;
+    char buffer[BUFFER_SIZE];
+
+    sock = socket(AF_INET, SOCK_DGRAM, 0);
+    if (sock == -1) {
+        perror("Socket creation failed");
+        exit(EXIT_FAILURE);
+    }
+
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_port = htons(PORT);
+    server_addr.sin_addr.s_addr = inet_addr("127.0.0.1");
+
+    printf("Stateless client. Type your messages:
+");
+
+    while (1) {
+        memset(buffer, 0, BUFFER_SIZE);
+        fgets(buffer, BUFFER_SIZE, stdin);
+        sendto(sock, buffer, strlen(buffer), 0, (struct sockaddr *)&server_addr, sizeof(server_addr));
+
+        memset(buffer, 0, BUFFER_SIZE);
+        int len = recvfrom(sock, buffer, BUFFER_SIZE - 1, 0, NULL, NULL);
+        if (len < 0) continue;
+        printf("Server: %s", buffer);
+    }
+
+    close(sock);
+    return 0;
+}
+
+Sample Output:
+Server Terminal:
+Stateless server listening on port 8081...
+Received: Hello Stateless Server!
+Received: How's it going?
+Client Terminal:
+Stateless client. Type your messages:
+Hello Stateless Server!
+Server: Hello Stateless Server!
+How's it going?
+Server: How's it going?
+
